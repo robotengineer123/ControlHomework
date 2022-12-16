@@ -33,6 +33,7 @@ class Motor:
         self.tspan = []
         self.t_start = 0
         self.offset_torque = offset_torque
+        self.first = True
 
     def data_processing_position(self, data):
         '''
@@ -84,8 +85,9 @@ class Motor:
         data = '3E 92 '+self.id+' 00'
         send_position=bytes.fromhex(data + " " + csum.compute_checksum8_mod256(data))
         self.ser.write(send_position)
-        time.sleep(0.01)
         count=self.ser.inWaiting()
+        while not count:
+            count = self.ser.inWaiting()
         if count>0:
             data=self.ser.read(count)
             data=binascii.b2a_hex(data).decode('gbk')
@@ -175,6 +177,32 @@ class Motor:
             data=binascii.b2a_hex(data).decode('gbk')
             # print(data)
             # print(data_processing_torque(data))
+    
+    def position_control(self, pos:int, spin_dir_cc=True):
+        """
+        pos is a value between 0~35999 corresponding to 0~360 degrees
+        """
+        pos = pos
+        if pos<0:
+            spin_dir_cc = not spin_dir_cc
+            pos *= -1
+
+        if spin_dir_cc:
+            spin = "01"
+        else:
+            spin = "00"
+        
+        pos_hex = int(pos).to_bytes(2, "little").hex()
+
+        data1 = "3E A5 " + self.id + " "+"04"
+
+        data2 = spin + " " + pos_hex[:2] + " " + pos_hex[2:] + " 00"
+        
+        command = (data1 + " "+csum.compute_checksum8_mod256(data1)+" "+data2+" " + csum.compute_checksum8_mod256(data2))
+        self.ser.write(bytes.fromhex(command.upper()))
+        time.sleep(0.01)
+
+
 
     def read_torque(self):
         '''
@@ -198,8 +226,12 @@ class Motor:
             if not self.position_ref:
                 self.position_ref = self.read_position()
             q_t=self.read_position()
-            self.q_t.append(q_t-self.position_ref)
-            self.tspan.append(time.perf_counter()-self.t_start)
+            
+            if not self.first:
+                self.q_t.append(q_t-self.position_ref)
+                self.tspan.append(time.perf_counter()-self.t_start)
+            
+            self.first=False
 
             if (5<self.i and print):
                 print("position ", q_t)
@@ -211,9 +243,14 @@ class Motor:
 
             self.i+=1
             self.torque_control(torque_t)
-    
+
     def start(self):
-        self.tstart = time.perf_counter()
+        self.t_start = time.perf_counter()
+
+    def set_ref_pos(self):
+        while (not self.read_position()):
+            pass
+        self.position_ref =  self.read_position()
 
     def stop(self):
         data = "3E 81 " + self.id + " 00"
@@ -226,30 +263,68 @@ class Motor:
     def savetxt(self):
         np.savetxt("position_data_"+self.id, np.array([self.tspan, self.q_t]))
 
+def get_running_angles():
+    motor_360_val = 35999
+    angles = np.loadtxt("Angles_diff.csv", delimiter=",").T
+    angles[0] *=-1
+    angles *=100
+    return angles
 
-if __name__ == "__main__":
-    from ast import literal_eval
+def runtest():
     ser1=serial.Serial("COM6",115200)
     ser2=serial.Serial("COM5",115200)
-    m1 = Motor("05", ser2, kp=4, offset_torque=0)
-    m2 = Motor("06", ser1, kp=1, offset_torque=0)
-    print("Move the robot to desired offset, then press enter")
+    angles = get_running_angles()
+    m1 = Motor("05", ser2, kp=5, kd=0.35, offset_torque=0)
+    m2 = Motor("06", ser1, kp=1.5, kd=0.1, offset_torque=0)
+    #m1.position_control(angles[0,0])
+    #m2.position_control(angles[1,0])
+    print("press enter when legs are in position")
     input()
-    m1.start()
-    m2.start()
+    m1.set_ref_pos()
+    m2.set_ref_pos()
     try:
-        while True:
-            start = time.perf_counter()
-            m1.Step()
-            elapsed1 = time.perf_counter() - start 
-            m2.Step()
-            time.sleep(0.0001)
-            elapsed = time.perf_counter()-start   
-    except KeyboardInterrupt:
-        print(elapsed1)
-        print(elapsed)
+        m1.start()
+        m2.start()
+        for angle in angles.T:  
+            m1.position_control(angle[0])
+            #m2.position_control(angle[1])
+            time.sleep(2)
+
         m1.stop()
         m2.stop()
         m1.ser.close()
         m2.ser.close()
+    except KeyboardInterrupt:
+        m1.stop()
+        m2.stop()
+        m1.ser.close()
+        m2.ser.close()
+
+def pid_test():
+    ser1=serial.Serial("COM6",115200)
+    ser2=serial.Serial("COM5",115200)
+    angles = get_running_angles()
+    m1 = Motor("05", ser2, kp=5, kd=0.35, offset_torque=30)
+    m2 = Motor("06", ser1, kp=1.5, kd=0.1, offset_torque=-11)
+    try:
+        m1.Step()
+        m2.Step()
+        print("Move the robot to desired offset, then press enter")
+        input()
+        m1.start()
+        m2.start()
+        while True:
+            m1.Step()
+            m2.position_control(m2.position_ref)
+            #m1.position_control(m2.position_ref+5000)
+            time.sleep(0.0001)
+
+    except KeyboardInterrupt:
+        m1.stop()
+        m2.stop()
+        m1.ser.close()
+        m2.ser.close()
+
+if __name__ == "__main__":
+    runtest()
 # print(char_checksum(bytes.fromhex('ECFF')))
