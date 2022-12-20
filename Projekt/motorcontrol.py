@@ -89,7 +89,9 @@ class Motor:
         while not count:
             count = self.ser.inWaiting()
         if count>0:
-            data=self.ser.read(count)
+            data = None
+            while (not data):
+                data=self.ser.read(count)
             data=binascii.b2a_hex(data).decode('gbk')
             # print(data)
             return self.data_processing_position(data)
@@ -182,25 +184,17 @@ class Motor:
         """
         pos is a value between 0~35999 corresponding to 0~360 degrees
         """
-        pos = pos
         if pos<0:
-            spin_dir_cc = not spin_dir_cc
-            pos *= -1
-
-        if spin_dir_cc:
-            spin = "01"
-        else:
-            spin = "00"
+            pos = 4294967295+pos
         
-        pos_hex = int(pos).to_bytes(2, "little").hex()
+        pos_hex = int(pos).to_bytes(4, "little").hex()
 
-        data1 = "3E A5 " + self.id + " "+"04"
+        data1 = "3E A7 " + self.id + " "+"04"
 
-        data2 = spin + " " + pos_hex[:2] + " " + pos_hex[2:] + " 00"
+        data2 = pos_hex[:2] + " " + pos_hex[2:4] + " "+ pos_hex[4:6] + " " + pos_hex[6:8]
         
         command = (data1 + " "+csum.compute_checksum8_mod256(data1)+" "+data2+" " + csum.compute_checksum8_mod256(data2))
         self.ser.write(bytes.fromhex(command.upper()))
-        time.sleep(0.01)
 
 
 
@@ -266,8 +260,7 @@ class Motor:
 def get_running_angles():
     motor_360_val = 35999
     angles = np.loadtxt("Angles_diff.csv", delimiter=",").T
-    angles[0] *=-1
-    angles *=100
+    angles *=1000
     return angles
 
 def runtest():
@@ -285,10 +278,23 @@ def runtest():
     try:
         m1.start()
         m2.start()
-        for angle in angles.T:  
-            m1.position_control(angle[0])
-            #m2.position_control(angle[1])
-            time.sleep(2)
+        prev1 = m1.read_position()
+        prev2 = m2.read_position()
+        while True:
+            for angle in angles.T: 
+                m1.position_control(angle[0])
+                m2.position_control(angle[1])
+                pos1 = m1.read_position()
+                pos2 = m2.read_position()
+                while (
+                    not pos1 or not pos2 or
+                    abs(prev1-pos1) < abs(angle[0]/1000)-5 or 
+                    abs(prev2-pos2) < abs(angle[1]/1000)-5):
+                    pos1 = m1.read_position()
+                    pos2 = m2.read_position()
+                prev1 = m1.read_position()
+                prev2 = m2.read_position()
+                #time.sleep(1)
 
         m1.stop()
         m2.stop()
@@ -304,19 +310,18 @@ def pid_test():
     ser1=serial.Serial("COM6",115200)
     ser2=serial.Serial("COM5",115200)
     angles = get_running_angles()
-    m1 = Motor("05", ser2, kp=5, kd=0.35, offset_torque=30)
-    m2 = Motor("06", ser1, kp=1.5, kd=0.1, offset_torque=-11)
+    m1 = Motor("05", ser2, kp=3.6, kd=0.22, offset_torque=40)
+    m2 = Motor("06", ser1, kp=0.45, kd=0.07, offset_torque=-15)
     try:
-        m1.Step()
         m2.Step()
+        m1.position_control(0)
         print("Move the robot to desired offset, then press enter")
         input()
         m1.start()
         m2.start()
         while True:
-            m1.Step()
-            m2.position_control(m2.position_ref)
-            #m1.position_control(m2.position_ref+5000)
+            m1.position_control(0)
+            m2.Step()
             time.sleep(0.0001)
 
     except KeyboardInterrupt:
@@ -326,5 +331,6 @@ def pid_test():
         m2.ser.close()
 
 if __name__ == "__main__":
-    runtest()
+    #runtest()
+    pid_test()
 # print(char_checksum(bytes.fromhex('ECFF')))
