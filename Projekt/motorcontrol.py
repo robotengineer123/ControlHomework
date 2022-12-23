@@ -310,18 +310,18 @@ def pid_test():
     ser1=serial.Serial("COM6",115200)
     ser2=serial.Serial("COM5",115200)
     angles = get_running_angles()
-    m1 = Motor("05", ser2, kp=3.6, kd=0.22, offset_torque=40)
-    m2 = Motor("06", ser1, kp=0.45, kd=0.07, offset_torque=-15)
+    m1 = Motor("05", ser2, kp=1.8, kd=0.22, offset_torque=40)
+    m2 = Motor("06", ser1, kp=3.448, kd=0.4526, offset_torque=-10)
     try:
-        m2.Step()
-        m1.position_control(0)
+        m1.Step()
+        m2.position_control(0)
         print("Move the robot to desired offset, then press enter")
         input()
         m1.start()
         m2.start()
         while True:
-            m1.position_control(0)
-            m2.Step()
+            m1.Step()
+            m2.position_control(0)
             time.sleep(0.0001)
 
     except KeyboardInterrupt:
